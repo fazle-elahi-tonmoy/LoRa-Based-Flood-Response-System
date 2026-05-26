@@ -1,6 +1,6 @@
 # LoRa Based Flood Response System
 
-<img src="project_demo.png">
+![Project Demo](images/project_demo.png)
 
 A decentralized emergency communication and flood response system built using **ESP32**, **LoRa**, GPS, and an interactive monitoring dashboard.
 The system enables homes and rescue teams to communicate even when traditional cellular networks fail during flood disasters.
