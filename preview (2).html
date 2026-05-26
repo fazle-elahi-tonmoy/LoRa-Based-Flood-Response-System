@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Flood Monitoring Dashboard</title>
+  <meta charset="utf-8" />
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial;
+      display: flex;
+      height: 100vh;
+      background: #0f172a;
+      color: #e2e8f0;
+    }
+
+    #left {
+      width: 35%;
+      padding: 12px;
+      overflow-y: auto;
+    }
+
+    #right {
+      width: 65%;
+      display: flex;
+      flex-direction: column;
+    }
+
+    #map { height: 70%; }
+
+    #debug {
+      height: 30%;
+      background: #020617;
+      color: #22c55e;
+      overflow-y: auto;
+      font-size: 12px;
+      padding: 8px;
+      font-family: monospace;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    button {
+      background: #1e293b;
+      border: none;
+      color: white;
+      padding: 6px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #334155;
+    }
+
+    #status {
+      margin-left: 10px;
+      font-weight: bold;
+    }
+
+    .connected { color: #22c55e; }
+    .disconnected { color: #ef4444; }
+
+    .card {
+      background: rgba(30, 41, 59, 0.7);
+      backdrop-filter: blur(8px);
+      border-radius: 10px;
+      padding: 12px;
+      margin-bottom: 10px;
+      border: 1px solid rgba(255,255,255,0.1);
+      box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+    }
+
+    .rescue { border-left: 5px solid #ef4444; }
+    .supply { border-left: 5px solid #3b82f6; }
+    .warn {
+      border-left: 5px solid #f97316;
+      background: rgba(255, 0, 0, 0.15);
+    }
+
+    .time {
+      font-size: 12px;
+      opacity: 0.7;
+    }
+  </style>
+</head>
+
+<body>
+
+<div id="left">
+  <div class="topbar">
+    <button onclick="connect()">Connect</button>
+    <button onclick="disconnect()">Disconnect</button>
+    <span id="status" class="disconnected">🔴 Disconnected</span>
+  </div>
+
+  <div id="notifications"></div>
+</div>
+
+<div id="right">
+  <div id="map"></div>
+  <div id="debug"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+<script>
+let port, reader;
+let buffer = "";
+let markers = {};
+
+let map = L.map('map').setView([23.76, 90.39], 12);
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png')
+  .addTo(map);
+
+function setStatus(state) {
+  const el = document.getElementById("status");
+
+  if (state === "connected") {
+    el.innerHTML = "🟢 Connected";
+    el.className = "connected";
+  } else {
+    el.innerHTML = "🔴 Disconnected";
+    el.className = "disconnected";
+  }
+}
+
+function log(msg) {
+  const debug = document.getElementById("debug");
+  debug.innerHTML += msg + "<br>";
+  debug.scrollTop = debug.scrollHeight;
+}
+
+async function connect() {
+  try {
+    port = await navigator.serial.requestPort();
+    await port.open({ baudRate: 115200 });
+
+    setStatus("connected");
+
+    reader = port.readable.getReader();
+    const decoder = new TextDecoder();
+
+    buffer = "";
+
+    while (true) {
+      let result;
+
+      try {
+        result = await reader.read();
+      } catch (err) {
+        console.error("Read error (disconnected):", err);
+        break; // USB disconnected
+      }
+
+      const { value, done } = result;
+
+      if (done) {
+        console.warn("Stream closed");
+        break;
+      }
+
+      buffer += decoder.decode(value, { stream: true });
+
+      let lines = buffer.split(/\r?\n/);
+      buffer = lines.pop();
+
+      for (let line of lines) {
+        line = line.trim();
+
+        if (line.length > 0) {
+          log(line);
+          handleData(line);
+        }
+      }
+    }
+
+  } catch (err) {
+    console.error("Connection failed:", err);
+  }
+
+  // If loop exits → disconnected
+  setStatus("disconnected");
+}
+
+async function disconnect() {
+  try {
+    if (reader) await reader.cancel();
+    if (port) await port.close();
+  } catch(e) {}
+
+  setStatus("disconnected");
+}
+
+function handleData(data) {
+  try {
+    let json = JSON.parse(data);
+
+    let time = new Date().toLocaleTimeString();
+
+    if (json.type === "Rescue" || json.type === "Supply") {
+      addRequestCard(json, time);
+      addMarker(json);
+    }
+
+    if (json.type === "warn") {
+      addWarningCard(time);
+    }
+
+  } catch (e) {
+    console.warn("Bad JSON:", data);
+  }
+}
+
+function addRequestCard(data, time) {
+  let div = document.createElement("div");
+
+  let cls = data.type === "Rescue" ? "rescue" : "supply";
+  div.className = "card " + cls;
+
+  div.innerHTML = `
+    <b>${data.type} Request</b><br>
+    ID: ${data.id}<br>
+    <span class="time">${time}</span><br><br>
+    <button onclick="removeCard(this, '${data.id}')">Clear</button>
+  `;
+
+  document.getElementById("notifications").appendChild(div);
+}
+
+function addWarningCard(time) {
+  let div = document.createElement("div");
+  div.className = "card warn";
+
+  div.innerHTML = `
+    <b>⚠ Flood Level Detected</b><br>
+    <span class="time">${time}</span><br><br>
+    <button onclick="this.parentElement.remove()">Clear</button>
+  `;
+
+  document.getElementById("notifications").appendChild(div);
+}
+
+function addMarker(data) {
+  let lat = parseFloat(data.lat);
+  let lon = parseFloat(data.lon);
+
+  if (isNaN(lat) || isNaN(lon)) return;
+
+  if (markers[data.id]) {
+    map.removeLayer(markers[data.id]);
+  }
+
+  let marker = L.marker([lat, lon]).addTo(map)
+    .bindPopup(`<b>${data.id}</b><br>${data.type}`);
+
+  markers[data.id] = marker;
+}
+
+function removeCard(btn, id) {
+  btn.parentElement.remove();
+
+  if (markers[id]) {
+    map.removeLayer(markers[id]);
+    delete markers[id];
+  }
+}
+</script>
+
+</body>
+</html>
