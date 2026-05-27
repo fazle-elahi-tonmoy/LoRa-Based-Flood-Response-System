@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+
+<title>Disaster Response Dashboard</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+<style>
+
+body{
+font-family:Arial;
+background:#111;
+color:white;
+}
+
+#map{
+height:500px;
+margin-top:10px;
+}
+
+button{
+padding:10px;
+margin:5px;
+}
+
+#log{
+background:black;
+padding:10px;
+height:200px;
+overflow:auto;
+}
+
+</style>
+
+</head>
+
+<body>
+
+<h2>Disaster Response Dashboard</h2>
+
+<button onclick="connect()">Connect Device</button>
+<button onclick="disconnect()">Disconnect</button>
+
+<div id="map"></div>
+
+<h3>Events</h3>
+<div id="log"></div>
+
+<audio id="alarm" src="https://actions.google.com/sounds/v1/alarms/alarm_clock.ogg"></audio>
+
+<script>
+
+let port;
+let reader;
+
+let map = L.map('map').setView([23.78,90.40],13);
+
+L.tileLayer(
+'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+{maxZoom:19}
+).addTo(map);
+
+function log(msg){
+let div=document.getElementById("log");
+div.innerHTML += msg + "<br>";
+div.scrollTop=div.scrollHeight;
+}
+
+async function connect(){
+
+port = await navigator.serial.requestPort();
+
+await port.open({baudRate:115200});
+
+reader = port.readable.getReader();
+
+readLoop();
+
+log("CONNECTED");
+}
+
+async function disconnect(){
+
+if(reader){
+await reader.cancel();
+reader=null;
+}
+
+if(port){
+await port.close();
+port=null;
+}
+
+log("DISCONNECTED");
+}
+
+async function readLoop(){
+
+while(port){
+
+const {value,done}=await reader.read();
+
+if(done) break;
+
+let text=new TextDecoder().decode(value);
+
+processSerial(text.trim());
+}
+}
+
+function processSerial(msg){
+
+log(msg);
+
+if(msg.startsWith("HELP")){
+
+let parts=msg.split(",");
+
+let mac=parts[1];
+let type=parts[2];
+let lat=parseFloat(parts[3]);
+let lon=parseFloat(parts[4]);
+
+addMarker(lat,lon,mac,type);
+
+document.getElementById("alarm").play();
+}
+
+if(msg.includes("FLOOD_WARNING")){
+
+alert("FLOOD WARNING!");
+
+document.getElementById("alarm").play();
+}
+}
+
+function addMarker(lat,lon,mac,type){
+
+let marker=L.marker([lat,lon]).addTo(map);
+
+marker.bindPopup(
+
+"<b>"+mac+"</b><br>"+type
+
+).openPopup();
+}
+
+</script>
+
+</body>
+
+</html>
